@@ -13,3 +13,22 @@
 #include <malloc.h>
 #include <memory.h>
 #include <tchar.h>
+
+#include <WinSock2.h>
+#pragma comment(lib, "ws2_32.lib")
+#include <stdio.h>
+
+//c++ header
+#include <ObjIdl.h>
+#include <gdiplus.h>
+#pragma comment(lib, "Gdiplus.lib")
+using namespace Gdiplus;
+
+#pragma comment(lib,"msimg32.lib")
+
+#include <vector>
+#include <list>
+
+#define WM_ASYNC	WM_USER+1
+
+//

@@ -1,6 +1,8 @@
 ﻿// WinServer.cpp : 애플리케이션에 대한 진입점을 정의합니다.
 //
 
+#define _WINSOCK_DEPRECATED_NO_WARNINGS
+
 #include "framework.h"
 #include "WinServer.h"
 
@@ -10,6 +12,28 @@
 HINSTANCE hInst;                                // 현재 인스턴스입니다.
 WCHAR szTitle[MAX_LOADSTRING];                  // 제목 표시줄 텍스트입니다.
 WCHAR szWindowClass[MAX_LOADSTRING];            // 기본 창 클래스 이름입니다.
+
+
+//server
+TCHAR socket_message[256];
+TCHAR msg[200];
+
+WSADATA	wsadata;
+SOCKET	s, cs;
+SOCKADDR_IN addr = { 0 }, c_addr;
+
+std::list<SOCKET> socketList;
+int size, msgLen;
+char buffer[100];
+
+//server
+int Winserver_close();
+int Winserver_init(HWND hWnd);
+SOCKET AcceptSocket(HWND hWnd, SOCKET s, SOCKADDR_IN& c_addr);
+int ReceiveMessage();
+void SendMessageToClinet(char* buffer);
+void ReadMessage(TCHAR * msg, char* buffer);
+void Close_Client(SOCKET s);
 
 // 이 코드 모듈에 포함된 함수의 선언을 전달합니다:
 ATOM                MyRegisterClass(HINSTANCE hInstance);
@@ -125,6 +149,28 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
     switch (message)
     {
+	case WM_CREATE:
+	{
+		return  Winserver_init(hWnd);
+	}
+		break;
+	case WM_ASYNC:
+	{
+		switch (lParam)
+		{
+		case FD_ACCEPT:
+			cs = AcceptSocket(hWnd, s, c_addr);
+			break;
+		case FD_READ:
+			ReadMessage(msg, buffer);
+			InvalidateRect(hWnd, NULL, TRUE);
+			break;
+		case FD_CLOSE:
+			Close_Client(cs);
+			break;
+		}
+	}
+	break;
     case WM_COMMAND:
         {
             int wmId = LOWORD(wParam);
@@ -147,6 +193,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             PAINTSTRUCT ps;
             HDC hdc = BeginPaint(hWnd, &ps);
             // TODO: 여기에 hdc를 사용하는 그리기 코드를 추가합니다...
+			if (_tcscmp(msg, _T("")))
+				TextOut(hdc, 0, 40, msg, (int)_tcslen(msg));
             EndPaint(hWnd, &ps);
         }
         break;
@@ -177,4 +225,149 @@ INT_PTR CALLBACK About(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
         break;
     }
     return (INT_PTR)FALSE;
+}
+
+int Winserver_close()
+{
+
+	closesocket(s);
+	WSACleanup();
+	return 1;
+}
+int Winserver_init(HWND hWnd)
+{
+	WSAStartup(MAKEWORD(2, 2), &wsadata);
+	s = socket(AF_INET, SOCK_STREAM, 0);
+
+	if (s == INVALID_SOCKET)
+	{
+		MessageBox(NULL, _T("socket failed"), _T("Error"), MB_OK);
+		return 0;
+	}
+	//	else
+	//	{
+	//		MessageBox(NULL, _T("socket success"), _T("Success"), MB_OK);
+	//	}
+
+
+	addr.sin_family = AF_INET;
+	addr.sin_port = 8080;
+	addr.sin_addr.S_un.S_addr = inet_addr("127.0.0.1");
+	if (bind(s, (LPSOCKADDR)&addr, sizeof(addr)))
+	{
+		MessageBox(NULL, _T("binding failed"), _T("Error"), MB_OK);
+		return 0;
+	}
+
+	WSAAsyncSelect(s, hWnd, WM_ASYNC, FD_ACCEPT);
+	//	else
+	//	{
+	//		MessageBox(NULL, _T("binding success"), _T("Success"), MB_OK);
+	//	}
+
+	if (listen(s, 5) == -1)
+	{
+		MessageBox(NULL, _T("listen failed"), _T("Error"), MB_OK);
+		return 0;
+	}
+	//	else
+	//	{
+	//		MessageBox(NULL, _T("listen success"), _T("Success"), MB_OK);
+	//	}
+	return 0;
+}
+SOCKET AcceptSocket(HWND hWnd, SOCKET s, SOCKADDR_IN & c_addr)
+{
+	SOCKET cs;
+	int size;
+	size = sizeof(c_addr);
+	cs = accept(s, (LPSOCKADDR)&c_addr, &size);
+	WSAAsyncSelect(cs, hWnd, WM_ASYNC, FD_READ | FD_CLOSE);
+
+	socketList.push_back(cs);
+
+
+	return cs;
+}
+int ReceiveMessage()
+{
+	do
+	{
+		SOCKADDR_IN c_addr;
+		int			size = sizeof(c_addr);
+		SOCKET cs = accept(s, (LPSOCKADDR)&c_addr, &size);
+
+		char buffer[100];
+		int msgLen;
+		msgLen = recv(cs, buffer, 100, 0);
+		buffer[msgLen] = NULL;
+
+#ifdef _UNICODE
+		TCHAR wBuffer[100];
+		msgLen = MultiByteToWideChar(CP_ACP, 0, buffer, strlen(buffer), NULL, NULL);
+		MultiByteToWideChar(CP_ACP, 0, buffer, strlen(buffer), wBuffer, msgLen);
+		wBuffer[msgLen] = NULL;
+
+		_stprintf_s(socket_message, _T("Client Message : %s \n 서버를 종료 하시겠습니까?"), wBuffer);
+#else
+
+		stprintf_s(socket_message, _T("Client Message : %s	\n 서버를 종료 하시겠습니까?"), Buffer);
+
+
+#endif // !_UNICODE
+	} while (MessageBox(NULL, socket_message,
+		_T("Server 메시지"), MB_YESNO) == IDNO);
+	return 0;
+}
+void SendMessageToClinet(char * buffer)
+{
+	for (std::list<SOCKET>::iterator it = socketList.begin();
+		it != socketList.end(); it++)
+	{
+		SOCKET cs = (*it);
+
+		send(cs, (LPSTR)buffer, strlen(buffer) + 1, 0);
+	}
+
+}
+void ReadMessage(TCHAR * msg, char * buffer)
+{
+	for (std::list<SOCKET>::iterator it = socketList.begin();
+		it != socketList.end(); it++)
+	{
+		SOCKET cs = (*it);
+
+		int msgLen = recv(cs, buffer, 100, 0);
+		if (msgLen > 0)
+		{
+			buffer[msgLen] = NULL;
+#ifdef _UNICODE
+			msgLen = MultiByteToWideChar(CP_ACP, 0, buffer, strlen(buffer), NULL, NULL);
+			MultiByteToWideChar(CP_ACP, 0, buffer, strlen(buffer), msg, msgLen);
+			msg[msgLen] = NULL;
+#else
+			strcpy(msg, buffer);
+#endif _UNICODE
+
+			SendMessageToClinet(buffer);
+
+		}
+
+
+	}
+}
+void Close_Client(SOCKET s)
+{
+	for (std::list<SOCKET>::iterator it = socketList.begin();
+		it != socketList.end(); it++)
+	{
+		SOCKET cs = (*it);
+		if (cs == s)
+		{
+			closesocket(cs);
+			it = socketList.erase(it);
+			break;
+		}
+	}
+
 }
